@@ -1,0 +1,19 @@
+Ten-Young Guh
+
+Not tested on bingsuns, which is SunOS; this virus is for Linux, not POSIX
+
+On a recent Linux, run `make` to compile,
+then run `virus` in the working directory whose files you would like to infect.
+
+The virus attempts to infect every file (after symlink-following)
+it finds in the working directory, and reports to standard error any files it cannot infect.
+The virus does not care about a file's executability, as that may change over time anyway.
+Of course, it will always fail to infect directories "." and "..",
+so seeing the virus fail to infect them helps visualize the virus in action.
+
+Running an infected file shall behave as above,
+then execute the victim with the same arguments and environment.
+
+Nothing stops the virus from re-infecting the same file;
+re-infection can quickly balloon the file size and bog down its startup time
+(time before bottommost victim execution).
