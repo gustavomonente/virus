@@ -5,6 +5,8 @@ Not tested on bingsuns, which is SunOS; this virus is for Linux, not POSIX
 On a recent Linux, run `make` to compile,
 then run `virus` in the working directory whose files you would like to infect.
 
+Behavior
+========
 The virus attempts to infect every file (after symlink-following)
 it finds in the working directory, and reports to standard error any files it cannot infect.
 The virus does not care about a file's executability, as that may change over time anyway.
@@ -14,6 +16,20 @@ so seeing the virus fail to infect them helps visualize the virus in action.
 Running an infected file shall behave as above,
 then execute the victim with the same arguments and environment.
 
+Notes
+=====
 Nothing stops the virus from re-infecting the same file;
 re-infection can quickly balloon the file size and bog down its startup time
 (time before bottommost victim execution).
+
+A victim first prepends the virus to every file in the working directory
+to which it has read/write access, copies the rest of itself after the virus to a temporary file,
+and executes the temporary file.
+
+Since the virus executes an unecrypted victim,
+it is easy to disinfect a victim by tracing when it calls execve.
+The path it passes to execve locates the temporary file.
+Even if a file no longer exists on any filesystem, Linux only deletes it
+if neither any filesystem nor any process refers to it.
+Thanks to Linux's proc system, you can still recover the file
+at /proc/[pid]/fds/[fd].
