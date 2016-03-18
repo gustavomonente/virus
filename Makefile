@@ -1,17 +1,16 @@
-CFLAGS ?= -O3
 CFLAGS += -std=gnu11 -Wall -Wextra -Werror -pedantic
-VIRUS_SIZE := $(shell ([ -f virus ] && stat -c %s virus) || echo 1)
-CPPFLAGS += -DVIRUS_SIZE=$(VIRUS_SIZE)
 
-check: virus
-	$(eval ACTUAL_VIRUS_SIZE := $(shell stat -c %s $^))
-	[ $(VIRUS_SIZE) = $(ACTUAL_VIRUS_SIZE) ] \
-	|| $(MAKE) -W virus.c $@
+virus: virus.c compute-virus-size-32.c compute-virus-size-64.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-virus: virus.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+compute-virus-size-%.c: compute-virus-size.c
+	echo 'DEFINE_COMPUTE_VIRUS_SIZE($*)' | cat $< - | $(CC) -E -x c -P -CC - > $@
+
+compute-virus-size.c: compute-virus-size.template.c
+	sed 's,$$, /*\n*/\\,' < $< > $@
+	echo >> $@
 
 clean:
-	$(RM) virus
+	$(RM) virus compute-virus-size-*.c compute-virus-size.c
 
 .PHONY: check clean
