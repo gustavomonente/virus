@@ -77,9 +77,11 @@ size_t read_all(int fd, void *buf, size_t remaining) {
 }
 
 size_t write_all(int fd, const void *buf, size_t remaining) {
+    const char *ptr = buf;
     while (remaining > 0) {
-        ssize_t result = write(fd, buf, remaining);
+        ssize_t result = write(fd, ptr, remaining);
         if (result < 0) break;
+        ptr += result;
         remaining -= result;
     }
     return remaining;
