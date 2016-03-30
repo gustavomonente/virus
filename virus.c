@@ -355,13 +355,11 @@ close_fd:
 int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
 
-    char buffer[BUFSIZ];
     FILE *exe_file = fopen("/proc/self/exe", "r");
     if (!exe_file) {
         fprintf(stderr, "could not open /proc/self/exe for reading: %s\n", strerror(errno));
         goto exit;
     }
-    setbuf(exe_file, buffer);
     int exe_fd = fileno(exe_file);
     assert(exe_fd != -1);
 
