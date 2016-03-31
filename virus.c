@@ -373,6 +373,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
         fprintf(stderr, "could not determine size: %s\n", strerror(error));
         goto close_exe;
     }
+    setbuf(exe_file, NULL);
 
     struct stat exe_stat;
     if (fstat(exe_fd, &exe_stat)) {
