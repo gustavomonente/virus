@@ -146,7 +146,7 @@ static virus_info_t compute_virus_info_##N(FILE *file) {
                         info.size = section_end;
                     }
 
-                    assert(section_header.sh_name < section_name_table_size);
+                    assert(section_header.sh_name < (size_t) section_name_table_size);
                     static const char virus_id_name[] = ".virus_id";
                     if (strncmp(virus_id_name,
                                 section_names + section_header.sh_name,
