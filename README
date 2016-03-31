@@ -7,7 +7,7 @@ then run `virus` in the working directory whose files you would like to infect.
 
 Behavior
 ========
-The virus attempts to infect every file (after symlink-following)
+The virus attempts to infect every likely-uninfected file
 it finds in the working directory, and reports to standard error any files it cannot infect.
 The virus does not care about a file's executability, as that may change over time anyway.
 Of course, it will always fail to infect directories "." and "..",
@@ -18,13 +18,25 @@ then execute the victim with the same arguments and environment.
 
 Notes
 =====
-Nothing stops the virus from re-infecting the same file;
-re-infection can quickly balloon the file size and bog down its startup time
-(time before bottommost victim execution).
-
-A victim first prepends the virus to every file in the working directory
-to which it has read/write access, copies the rest of itself after the virus to a temporary file,
+A victim first attempts to infect every file in the working directory,
+copies the rest of itself after the virus to a temporary file,
 and executes the temporary file.
+
+First, the virus attempts to resize the victim,
+then prepend itself to the victim in-place.
+If the virus cannot open the victim with read-write permissions,
+then it attempts to create a temporary file,
+concatenate the virus with the victim into the temporary file,
+and then replace the victim with the temporary file.
+If the virus cannot open the victim with read-only permissions,
+then it attempts to interpret the victim as a symbolic link,
+and then replace the victim with the virus
+concatenated with a /bin/sh script to execute the target.
+
+The virus only infects a file if, upon reading the file,
+    * the file contains the ELF signature;
+    * the file, according to the ELF format, is of executable type; and
+    * at the offset in the virus of the virus's identifier, the file also contains the identifier.
 
 Since the virus executes an unecrypted victim,
 it is easy to disinfect a victim by tracing when it calls execve.
