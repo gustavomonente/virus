@@ -95,6 +95,34 @@ static virus_info_t compute_virus_info_##N(FILE *file) {
         goto free_section_names;
     }
 
+    if (num_segments > 0) {
+        int result = fseeko(file, header.e_phoff, SEEK_SET);
+        assert(!result);
+        posix_fadvise(fd, header.e_phoff, program_header_table_size,
+                      POSIX_FADV_SEQUENTIAL);
+        for (off_t i = 0; i < num_segments; ++i) {
+            Elf##N##_Phdr program_header;
+            if (fread(&program_header, sizeof(program_header), 1, file) == 0) {
+                info.size = -errno;
+                assert(ferror(file));
+                goto free_section_names;
+            }
+            switch (program_header.p_type) {
+                case PT_NULL:
+                /* already included in file; only specified if also in memory */
+                case PT_PHDR:
+                    break;
+                default: {
+                    off_t segment_end = program_header.p_offset + (off_t) program_header.p_filesz;
+                    if (info.size < segment_end) {
+                        info.size = segment_end;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     if (num_sections > 1) {
         off_t offset = header.e_shoff + sizeof(Elf##N##_Shdr);
         int result = fseeko(file, offset, SEEK_SET);
@@ -133,34 +161,6 @@ static virus_info_t compute_virus_info_##N(FILE *file) {
         }
     }
     assert(info.id_offset >= 0);
-
-    if (num_segments > 0) {
-        int result = fseeko(file, header.e_phoff, SEEK_SET);
-        assert(!result);
-        posix_fadvise(fd, header.e_phoff, program_header_table_size,
-                      POSIX_FADV_SEQUENTIAL);
-        for (off_t i = 0; i < num_segments; ++i) {
-            Elf##N##_Phdr program_header;
-            if (fread(&program_header, sizeof(program_header), 1, file) == 0) {
-                info.size = -errno;
-                assert(ferror(file));
-                goto free_section_names;
-            }
-            switch (program_header.p_type) {
-                case PT_NULL:
-                /* already included in file; only specified if also in memory */
-                case PT_PHDR:
-                    break;
-                default: {
-                    off_t segment_end = program_header.p_offset + (off_t) program_header.p_filesz;
-                    if (info.size < segment_end) {
-                        info.size = segment_end;
-                    }
-                    break;
-                }
-            }
-        }
-    }
 
 free_section_names:
     free(section_names);
