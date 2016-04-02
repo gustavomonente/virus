@@ -1,3 +1,7 @@
 virus
-compute-virus-info.c
-compute-virus-info-*.c
+*.o
+virus.elf
+virus.got.plt
+virus.data
+virus.data1
+data2.bin
