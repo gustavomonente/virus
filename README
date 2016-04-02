@@ -28,10 +28,6 @@ If the virus cannot open the victim with read-write permissions,
 then it attempts to create a temporary file,
 concatenate the virus with the victim into the temporary file,
 and then replace the victim with the temporary file.
-If the virus cannot open the victim with read-only permissions,
-then it attempts to interpret the victim as a symbolic link,
-and then replace the victim with the virus
-concatenated with a /bin/sh script to execute the target.
 
 The virus only infects a file if, upon reading the file,
     * the file contains the ELF signature;
