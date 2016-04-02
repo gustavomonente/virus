@@ -31,7 +31,7 @@ typedef struct {
     off_t id_offset;
 } virus_info_t;
 
-static const char virus_id[] __attribute__((section(".virus_id"))) = __DATE__ __TIME__;
+static const char virus_id[] = __DATE__ __TIME__;
 
 static int virus_info_error(const virus_info_t *info) {
     return info->size >= 0 ? 0 : -info->size;

