@@ -2,6 +2,10 @@
 #error "Linux only"
 #endif
 
+#ifndef __ELF__
+#error "ELF only"
+#endif
+
 #include "victim.h"
 
 #include <assert.h>
@@ -22,10 +26,6 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
-
-#ifndef __ELF__
-#error "ELF only"
-#endif
 
 static_assert(sizeof(size_t) >= sizeof(off_t), "off_t must fit in size_t");
 
