@@ -23,11 +23,11 @@ copies the rest of itself after the virus to a temporary file,
 and executes the temporary file.
 
 First, the virus attempts to resize the victim,
-then prepend itself to the victim in-place.
+then infect the victim in-place.
 If the virus cannot open the victim with read-write permissions,
 then it attempts to create a temporary file,
-concatenate the virus with the victim into the temporary file,
-and then replace the victim with the temporary file.
+infect a copy of the victim into the temporary file,
+then replace the victim with the temporary file.
 
 The virus only infects a file if, upon reading the file,
     * the file contains the ELF signature;
