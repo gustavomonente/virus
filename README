@@ -7,9 +7,8 @@ then run `virus` in the working directory whose files you would like to infect.
 
 Behavior
 ========
-The virus attempts to infect every likely-uninfected file
+The virus attempts to infect every likely-uninfected executable ELF file
 it finds in the working directory, and reports to standard error any files it cannot infect.
-The virus does not care about a file's executability, as that may change over time anyway.
 Of course, it will always fail to infect directories "." and "..",
 so seeing the virus fail to infect them helps visualize the virus in action.
 
