@@ -1,7 +1,7 @@
 CFLAGS += -std=gnu11 -Wall -Wextra -Werror -pedantic
 LDFLAGS += -Wl,--defsym,elf_headers=__executable_start \
-		   -Wl,--defsym,mutable_data_init_begin=_binary_data2_bin_start \
-		   -Wl,--defsym,mutable_data_init_end=_binary_data2_bin_end
+           -Wl,--defsym,mutable_data_init_begin=_binary_data2_bin_start \
+           -Wl,--defsym,mutable_data_init_end=_binary_data2_bin_end
 
 virus: data2.x virus.o empty-victim.o data2.o
 	$(CC) -T $< -o $@ virus.o empty-victim.o data2.o $(LDFLAGS)
@@ -25,7 +25,7 @@ virus.data1: virus.elf
 	objcopy --output-format=binary --only-section=.data1 $< $@
 
 virus.elf: LDFLAGS += -Wl,--defsym,_binary_data2_bin_start=0 \
-					  -Wl,--defsym,_binary_data2_bin_end=0
+                      -Wl,--defsym,_binary_data2_bin_end=0
 virus.elf: common.x virus.o empty-victim.o
 	$(CC) -T $< -o $@ virus.o empty-victim.o $(LDFLAGS)
 
