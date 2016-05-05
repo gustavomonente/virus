@@ -6,8 +6,11 @@ LDFLAGS += -Wl,--defsym,elf_headers=__executable_start \
 virus: data2.x virus.o empty-victim.o data2.o
 	$(CC) -T $< -o $@ virus.o empty-victim.o data2.o $(LDFLAGS)
 
-data2.o: data2.bin
-	objcopy --input-format=binary --output-format=elf64-x86-64 --binary-architecture=i386 --rename-section .data=.data2 $< $@
+data2.o: data2.bin objcopy-args
+	objcopy @objcopy-args --input-format=binary --rename-section .data=.data2 $< $@
+
+objcopy-args: define-objcopy-args.sh
+	ld --verbose | sh $< > $@
 
 data2.bin: virus.got.plt virus.data virus.data1
 	cat $^ > $@
@@ -37,6 +40,6 @@ empty-victim.o: empty-victim.c
 virus.c empty-victim.c: victim.h
 
 clean:
-	$(RM) virus virus.elf virus.got.plt virus.data virus.data1 data2.bin *.o
+	$(RM) virus virus.elf virus.got.plt virus.data virus.data1 data2.bin objcopy-args *.o
 
 .PHONY: check clean
