@@ -406,7 +406,7 @@ static int infect_by_copy(const char *path) {
                 posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
                 io_result = sendfile_all(tmp_fd, fd, 0, stat.st_size);
                 if (io_result.remaining > 0) {
-                    result = -(io_result.err ? io_result.err : EINVAL);
+                    result = -(io_result.err ? io_result.err : EBUSY);
                     goto close_tmp;
                 }
                 break;
