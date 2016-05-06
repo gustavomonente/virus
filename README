@@ -27,8 +27,8 @@ infect a copy of the victim into the temporary file,
 then replace the victim with the temporary file.
 
 The virus only infects a file if, upon reading the file,
-    * the file contains the ELF signature;
-    * the file, according to the ELF format, is of executable type; and
+    * the file has any of its executable permissions enabled;
+    * the file contains the ELF signature; and
     * at the offset in the virus of the virus's identifier, the file also contains the identifier.
 
 Since the virus executes an unecrypted victim,
