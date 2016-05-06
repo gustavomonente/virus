@@ -9,8 +9,6 @@ Behavior
 ========
 The virus attempts to infect every likely-uninfected executable ELF file
 it finds in the working directory, and reports to standard error any files it cannot infect.
-Of course, it will always fail to infect directories "." and "..",
-so seeing the virus fail to infect them helps visualize the virus in action.
 
 Running an infected file shall behave as above,
 then execute the victim with the same arguments and environment.
