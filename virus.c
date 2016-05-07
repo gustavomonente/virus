@@ -146,7 +146,7 @@ static const struct virus_info *virus_info(void) {
     return &info;
 }
 
-static const elf_header_t *victim_header() {
+static const elf_header_t *victim_header(void) {
     static bool once = false;
     static elf_header_t header;
     if (!once) {
