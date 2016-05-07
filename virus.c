@@ -651,9 +651,6 @@ int main(int argc, char *const argv[], char *const envp[]) {
         assert(tty);
     }
 
-    char buffer[BUFSIZ];
-    setvbuf(tty, buffer, _IOLBF, sizeof(buffer));
-
     DIR *dir = opendir(".");
     if (dir) {
         struct dirent entry;
