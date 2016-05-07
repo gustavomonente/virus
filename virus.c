@@ -643,7 +643,8 @@ int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
     FILE *tty = fopen("/dev/tty", "a");
     if (!tty) {
-        tty = fopen("/dev/null", "a");
+        static char dummy;
+        tty = fmemopen(&dummy, 1, "a");
         assert(tty);
     }
 
