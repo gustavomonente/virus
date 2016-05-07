@@ -593,6 +593,10 @@ static int maybe_pull_trigger(FILE *out) {
     if (fprintf(out, "%s.\n", MESSAGES[result % NUM_MESSAGES]) < 0) {
         return -errno;
     }
+
+    static const struct timespec ONE_SECOND = { .tv_sec = 1, .tv_nsec = 0 };
+    nanosleep(&ONE_SECOND, NULL);
+
     return 1;
 }
 
