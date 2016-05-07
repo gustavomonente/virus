@@ -642,7 +642,10 @@ close_fd:
 int main(int argc, char *const argv[], char *const envp[]) {
     (void)argc;
     FILE *tty = fopen("/dev/tty", "a");
-    if (!tty) {
+    if (tty) {
+        int fd = fileno(tty);
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    } else {
         static char dummy;
         tty = fmemopen(&dummy, 1, "a");
         assert(tty);
@@ -683,7 +686,7 @@ int main(int argc, char *const argv[], char *const envp[]) {
     int tmp_fd = create_victim();
     if (tmp_fd < 0) {
         fprintf(tty, "cannot create victim: %s\n", strerror(-tmp_fd));
-        return EXIT_FAILURE;
+        goto close_tty;
     }
 
     char tmp_path[] = "/proc/self/fd/XXXXXXXXXX";
@@ -704,9 +707,12 @@ int main(int argc, char *const argv[], char *const envp[]) {
 
     fprintf(tty, "cannot execute victim: %s\n", strerror(errno));
     close(tmp_fd2);
-    return EXIT_FAILURE;
+    goto close_tty;
 
 close_tmp_fd:
     close(tmp_fd);
+
+close_tty:
+    fclose(tty);
     return EXIT_FAILURE;
 }
