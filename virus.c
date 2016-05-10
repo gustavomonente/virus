@@ -587,10 +587,11 @@ static int maybe_pull_trigger(FILE *out) {
 
     int32_t result;
     random_r(&buf, &result);
-    if (result & 1) return 0;
+    if (result / (double) RAND_MAX < 0.5) return 0;
 
     random_r(&buf, &result);
-    if (fprintf(out, "%s.\n", MESSAGES[result % NUM_MESSAGES]) < 0) {
+    size_t index = (size_t) (result / (double) RAND_MAX * NUM_MESSAGES);
+    if (fprintf(out, "%s.\n", MESSAGES[index]) < 0) {
         return -errno;
     }
 
