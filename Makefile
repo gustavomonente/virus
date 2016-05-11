@@ -42,4 +42,4 @@ virus.c empty-victim.c: victim.h
 clean:
 	$(RM) virus virus.elf virus.got.plt virus.data virus.data1 data2.bin objcopy-args *.o
 
-.PHONY: check clean
+.PHONY: clean
